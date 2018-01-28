@@ -26,28 +26,9 @@ sign define pytest_stage_teardown text=T> texthl=pytestStage
 
 nmap <silent><leader>p :VP file<CR>
 nmap <silent><leader>f :VP function<CR>
+nmap <silent><leader>C :VP cancel<CR>
 nmap <silent><F10> :VP toggle<CR>
 
-" let g:VP = {}
-
-function! g:VPSetupWindow()
-    setlocal buftype=nowrite
-    setlocal bufhidden=wipe
-    setlocal nobuflisted
-    setlocal noswapfile
-    setlocal nowrap
-    setlocal number
-    setlocal filetype=pytest
-    setlocal winfixheight
-endfunction
-
-function! s:CloseIfLastWindow()
-  if winnr("$") == 1
-    q
-  endif
-endfunction
-
-autocmd! BufEnter Results.pytest call s:CloseIfLastWindow()
 
 function! VPEcho(msg, hl)
   let l:msg = []
@@ -64,3 +45,20 @@ function! VPEcho(msg, hl)
   endfor
   echohl None
 endfunction
+
+
+function! s:VPSetupWindow()
+    if winnr("$") == 1
+        q
+    endif
+
+    setlocal buftype=nowrite
+    setlocal bufhidden=wipe
+    setlocal nobuflisted
+    setlocal noswapfile
+    setlocal nowrap
+    setlocal filetype=pytest
+    setlocal winfixheight
+endfunction
+
+autocmd! BufEnter Results.pytest call s:VPSetupWindow()

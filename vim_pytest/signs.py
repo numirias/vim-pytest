@@ -21,11 +21,11 @@ class Sign:
             self.unplace()
         name = 'pytest_%s' % state
         self.vim.command('sign place %d line=%d name=%s buffer=%s' %
-                         (self.id, self.lineno + 1, name, self.buffer))
+                         (self.id, self.lineno + 1, name, self.buffer.number), async=True)
         self.placed = True
 
     def unplace(self):
-        self.vim.command('sign unplace %d' % self.id)
+        self.vim.command('sign unplace %d' % self.id, async=True)
         self.placed = False
 
 
@@ -35,8 +35,7 @@ class Signs:
         self.vim = vim
         self.signs = {}
 
-    def add(self, id, lineno):
-        buffer = self.vim.current.buffer.number
+    def add(self, buffer, id, lineno):
         sign = Sign(self.vim, buffer, lineno)
         self.signs[id] = sign
         return sign
