@@ -226,6 +226,9 @@ class Plugin(SplitMixin):
         self.signs.remove_all()
 
     def run_tests(self, lineno=None):
+        if self.test_session and self.test_session.proc:
+            self.error('Pytest is currently running. (Use "stop" to cancel.)')
+            return
         self.signs.remove_all()
         self.test_session = TestSession(self, self.vim.current.buffer, lineno)
         self.test_session()
