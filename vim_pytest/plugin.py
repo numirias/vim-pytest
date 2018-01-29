@@ -1,11 +1,14 @@
 from multiprocessing import Process, Pipe
+import os
+import signal
 import threading
 
 import neovim
 import pytest
 
-from .pytest_plugin import run_pytest
+from .pytest_plugin import pytest_process
 from .signs import Signs
+
 
 
 WIN_NAME = 'Results.pytest'
@@ -23,12 +26,13 @@ class TestSession:
     def __call__(self):
         path = self.buffer.name
         self.vp.echo('Running pytest on %s' % path)
-        thread = threading.Thread(target=self.thread, args=(path, self.lineno))
+        thread = threading.Thread(target=self.loop, args=(path, self.lineno))
         thread.start()
 
-    def thread(self, path, lineno):
-        conn, other_conn = Pipe()
-        proc = Process(target=run_pytest, args=(other_conn, lineno, [path]))
+    def loop(self, path, lineno):
+        conn, other = Pipe()
+        proc = Process(target=pytest_process, args=(other, lineno, [path]))
+        self.proc = proc
         proc.start()
         while True:
             try:
@@ -46,13 +50,18 @@ class TestSession:
                 try:
                     func(*args)
                 except:
-                    import traceback
-                    self.vp.vim.async_call(
-                        self.vp.echo,
-                        'Error in Pytest thread.\n%s' % traceback.format_exc(),
-                    )
-                    raise
-        proc.join() # TODO
+                    self.handle_exception()
+            if name == 'error':
+                break
+        proc.join()
+        self.proc = None
+
+    def handle_exception(self):
+        import traceback
+        self.vp.vim.async_call(
+            self.vp.error,
+            'Exception in message thread.\n%s' % traceback.format_exc(),
+        )
 
     def msg_protocol(self, item):
         self.num_started += 1
@@ -79,6 +88,12 @@ class TestSession:
     def msg_stdout(self, stdout):
         self.stdout = stdout
         self.vp.vim.async_call(self.show_results)
+
+    def msg_error(self, msg):
+        self.vp.vim.async_call(
+            self.vp.error,
+            'Exception in pytest process: %s ' % msg
+        )
 
     def show_results(self):
         lines = self.make_lines()
@@ -132,7 +147,6 @@ class SplitMixin:
         self.vim.command('exe %d "resize %d"' % (self.split_buffer_id(), new_size))
 
     def split_delete(self):
-        # self.vim.command('echo 1')
         if self.split_buffer_id() > -1:
             self.vim.command('exe "bdelete" buffer_number("%s")' % WIN_NAME)
 
@@ -153,9 +167,9 @@ class Plugin(SplitMixin):
         self.test_session = None
         super().__init__()
 
-    def echo(self, msg, async=False, *args, **kwargs): # TODO (can be out_write)
-        msg = str(msg).replace('"', '\\"')
-        self.vim.command('echo ' + '"' + str(msg) + '"', async=async, *args, **kwargs)
+    def echo(self, msg):
+        escaped = str(msg).replace('"', '\\"')
+        self.vim.command('echo "%s"' % escaped)
 
     def echo_okay(self, msg, *args, **kwargs):
         self.echo_color(msg, hl='pytestWarning', *args, **kwargs)
@@ -169,20 +183,17 @@ class Plugin(SplitMixin):
     def echo_color(self, msg, hl='Normal', *args, **kwargs):
         self.vim.call('VPEcho', msg, hl, *args, **kwargs)
 
+    def error(self, obj):
+        self.vim.err_write('VP: %s\n' % obj)
+
     @neovim.command('VP', range='', nargs='*', sync=False)
-    def cmd_run(self, args, range):
+    def run(self, args, range):
         try:
             func = getattr(self, 'cmd_%s' % args[0])
         except AttributeError:
-            self.echo('Pytest command %s not found.' % args[0])
+            self.error('Subcommand not found: %s' % args[0])
         else:
             func()
-
-    def async_cmd(self, s):
-        self.vim.command(s, async=True)
-
-    def async_eval(self, s):
-        return self.vim.eval(s, async=True)
 
     def cmd_file(self):
         self.run_tests()
@@ -192,15 +203,27 @@ class Plugin(SplitMixin):
 
     def cmd_toggle(self):
         if not self.test_session or not self.test_session.stdout:
-            self.echo_bad('No test failures to show.')
+            self.error('No test results to show.')
             return
         self.split_toggle()
 
+    def cmd_stop(self):
+        try:
+            pid = self.test_session.proc.pid
+        except AttributeError:
+            self.error('Pytest isn\'t running.')
+            return
+        self.echo('Stopping pytest run (PID %d).' % pid)
+        try:
+            os.kill(pid, signal.SIGINT)
+        except ProcessLookupError:
+            self.error('Pytest isn\'t running.')
+            return
+        self.test_session.proc.join()
+        self.echo('Stopped pytest.')
+
     def cmd_nosigns(self):
         self.signs.remove_all()
-
-    def cmd_cancel(self):
-        self.echo('cancel')
 
     def run_tests(self, lineno=None):
         self.signs.remove_all()

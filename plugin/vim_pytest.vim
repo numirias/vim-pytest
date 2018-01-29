@@ -26,7 +26,7 @@ sign define pytest_stage_teardown text=T> texthl=pytestStage
 
 nmap <silent><leader>p :VP file<CR>
 nmap <silent><leader>f :VP function<CR>
-nmap <silent><leader>C :VP cancel<CR>
+nmap <silent><leader>C :VP stop<CR>
 nmap <silent><F10> :VP toggle<CR>
 
 
