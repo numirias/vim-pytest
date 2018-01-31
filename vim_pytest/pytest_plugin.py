@@ -43,6 +43,7 @@ class PytestPlugin:
         self.config = None
         self.reports = {}
         self.tests = []
+        self.exitcoe = None
 
     def pytest_configure(self, config):
         self.config = config
@@ -60,24 +61,16 @@ class PytestPlugin:
         self.conn.send('collectionfinish', items)
 
     def pytest_runtest_protocol(self, item, nextitem):
-        self.conn.send('protocol', item)
-
-    def pytest_unconfigure(self, config):
-        self.conn.send('stdout', self.stdout.getvalue())
-        self.conn.send('quit')
+        self.conn.send('test_start', item)
 
     def pytest_runtest_setup(self, item):
-        self.conn.send('stage', 'setup', item)
+        self.conn.send('test_stage', item, 'setup')
 
     def pytest_runtest_call(self, item):
-        self.conn.send('stage', 'call', item)
+        self.conn.send('test_stage', item, 'call')
 
     def pytest_runtest_teardown(self, item):
-        self.conn.send('stage', 'call', item)
-
-    def pytest_terminal_summary(self, terminalreporter, exitstatus):
-        self.stdout.truncate(0)
-        self.stdout.seek(0)
+        self.conn.send('test_stage', item, 'teardown')
 
     def pytest_runtest_logreport(self, report):
         if report.nodeid in self.reports:
@@ -85,20 +78,23 @@ class PytestPlugin:
         else:
             self.reports[report.nodeid] = [report]
         outcome = self.total_outcome(self.reports[report.nodeid])
-        self.conn.send('logreport', report.nodeid, report.when, outcome)
+        self.conn.send('test_outcome', report.nodeid, report.when, outcome)
 
     def pytest_sessionfinish(self, session):
+        self.exitcode = session.exitstatus
+
+    def pytest_unconfigure(self, config):
         reports = self.reports.values()
         for group in reports:
             outcome = self.total_outcome(group)
             path, lineno, domain = group[0].location
             self.tests.append(PytestTest(outcome, lineno))
+        outcomes = Counter([self.total_outcome(r) for r in reports])
+        self.conn.send('finish', outcomes, self.exitcode, self.stdout.getvalue())
 
-        summary = Counter([self.total_outcome(r) for r in reports])
-        self.conn.send('sessionfinish', summary)
-
-    def pytest_internalerror(self, excrepr, excinfo):
-        self.conn.send('internalerror', excrepr)
+    def pytest_terminal_summary(self, terminalreporter, exitstatus):
+        self.stdout.truncate(0)
+        self.stdout.seek(0)
 
     def total_outcome(self, reports):
         """Return actual test outcome of the group of reports."""

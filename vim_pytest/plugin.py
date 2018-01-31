@@ -10,7 +10,13 @@ from .pytest_plugin import pytest_process
 from .signs import Signs
 
 
-
+# Exit codes from pytest
+EXIT_OK = 0
+EXIT_TESTSFAILED = 1
+EXIT_INTERRUPTED = 2
+EXIT_INTERNALERROR = 3
+EXIT_USAGEERROR = 4
+EXIT_NOTESTSCOLLECTED = 5
 WIN_NAME = 'Results.pytest'
 
 class TestSession:
@@ -22,6 +28,8 @@ class TestSession:
         self.num_collected = 0
         self.num_started = 0
         self.stdout = None
+        self.exitcode = None
+        self.outcomes = None
 
     def __call__(self):
         path = self.buffer.name
@@ -40,8 +48,6 @@ class TestSession:
             except EOFError:
                 break
             name, *args = obj
-            if name == 'quit':
-                break
             try:
                 func = getattr(self, 'msg_%s' % name)
             except AttributeError:
@@ -51,7 +57,7 @@ class TestSession:
                     func(*args)
                 except:
                     self.handle_exception()
-            if name == 'error':
+            if name in ['error', 'finish']:
                 break
         proc.join()
         self.proc = None
@@ -63,30 +69,30 @@ class TestSession:
             'Exception in message thread.\n%s' % traceback.format_exc(),
         )
 
-    def msg_protocol(self, item):
-        self.num_started += 1
-        self.vp.vim.async_call(
-            self.vp.echo,
-            ('Running test %d/%d' % (self.num_started, self.num_collected))
-        )
-
     def msg_collectionfinish(self, items):
         self.num_collected = len(items)
         for item in items:
             sign = self.vp.signs.add(self.buffer, item['nodeid'], item['lineno'])
             sign.state('collected')
 
-    def msg_stage(self, stage, item):
+    def msg_test_start(self, item):
+        self.num_started += 1
+        self.vp.vim.async_call(
+            self.vp.echo,
+            ('Running test %d/%d' % (self.num_started, self.num_collected))
+        )
+
+    def msg_test_stage(self, item, stage):
         self.vp.signs.get(item['nodeid']).state('stage_%s' % stage)
 
-    def msg_logreport(self, nodeid, stage, outcome):
+    def msg_test_outcome(self, nodeid, stage, outcome):
         self.vp.signs.get(nodeid).state('outcome_%s' % outcome)
 
-    def msg_sessionfinish(self, outcomes):
+    def msg_finish(self, outcomes, exitcode, stdout):
         self.outcomes = outcomes
-
-    def msg_stdout(self, stdout):
-        self.stdout = stdout
+        self.exitcode = exitcode
+        lines = stdout.split('\n')[:-1]
+        self.stdout = lines[1:] if not lines[0] else lines
         self.vp.vim.async_call(self.show_results)
 
     def msg_error(self, msg):
@@ -95,20 +101,37 @@ class TestSession:
             'Exception in pytest process: %s ' % msg
         )
 
-    def show_results(self):
-        lines = self.make_lines()
-        if self.bad_outcomes:
-            self.vp.split_fill(lines)
+    def show_results(self, force=False):
+        if force or self.exitcode not in [EXIT_OK, EXIT_NOTESTSCOLLECTED]:
+            self.vp.split_fill(self.stdout)
         else:
             self.vp.split_delete()
-        self.vp.show_summary()
+        self.show_summary()
 
-    def make_lines(self):
-        return self.stdout.split('\n')[1:-1]
-
-    @property
-    def bad_outcomes(self):
-        return set(self.outcomes) - {'passed', 'skipped', 'xfailed', 'xpassed'}
+    def show_summary(self):
+        total = self.num_started
+        outcomes = self.outcomes
+        outcomes_text = ', '.join(('%d %s' % (v, k)) for k, v in outcomes.items())
+        if len(outcomes) == 1:
+            summary = 'All %d tests %s.' % (total, list(outcomes)[0])
+        else:
+            summary = '%d tests done: %s' % (total, outcomes_text)
+        if self.exitcode == EXIT_OK:
+            self.vp.echo_good(summary)
+        elif self.exitcode in [EXIT_TESTSFAILED, EXIT_INTERRUPTED]:
+            if self.exitcode == EXIT_INTERRUPTED:
+                if not outcomes:
+                    self.vp.echo_bad('Interrupted!')
+                else:
+                    self.vp.echo_bad('Interrupted! %s' % summary)
+            else:
+                self.vp.echo_bad(summary)
+        elif self.exitcode == EXIT_INTERNALERROR:
+            self.vp.echo_okay('Internal error!')
+        elif self.exitcode == EXIT_USAGEERROR:
+            self.vp.echo_okay('Usage error!')
+        elif self.exitcode == EXIT_NOTESTSCOLLECTED:
+            self.vp.echo_okay('No tests collected.')
 
 
 class SplitMixin:
@@ -123,39 +146,13 @@ class SplitMixin:
         return self.vim.eval('buffer_number("%s")' % WIN_NAME)
 
     def split_fill(self, lines):
-        if self.split_buffer_id() > -1:
-            self.split_update_size()
-        else:
-            self.split_create()
+        self.vim.command('')
+        self.vim.call('VPCreateSplit', len(lines))
         self.split_buffer()[:] = lines
 
-    def split_create(self):
-        new_size = min(
-            self.max_split_size,
-            len(self.test_session.make_lines()),
-            self.vim.eval('winheight("%") / 2'),
-        )
-        self.vim.command('botright %d new %s' % (new_size, WIN_NAME))
-        self.vim.command('wincmd p')
-
-    def split_update_size(self):
-        new_size = min(
-            self.max_split_size,
-            len(self.test_session.make_lines()),
-            self.vim.eval('(winheight("%%") + winheight("%s")) / 2 + 1' % WIN_NAME),
-        )
-        self.vim.command('exe %d "resize %d"' % (self.split_buffer_id(), new_size))
-
     def split_delete(self):
-        if self.split_buffer_id() > -1:
-            self.vim.command('exe "bdelete" buffer_number("%s")' % WIN_NAME)
-
-    def split_toggle(self):
-        if self.split_buffer_id() > -1:
-            self.split_delete()
-        else:
-            self.split_fill(self.test_session.make_lines())
-            self.show_summary()
+        self.vim.command('')
+        self.vim.call('VPDeleteSplit')
 
 
 @neovim.plugin
@@ -184,7 +181,7 @@ class Plugin(SplitMixin):
         self.vim.call('VPEcho', msg, hl, *args, **kwargs)
 
     def error(self, obj):
-        self.vim.err_write('VP: %s\n' % obj)
+        self.vim.err_write('[VP] %s\n' % obj)
 
     @neovim.command('VP', range='', nargs='*', sync=False)
     def run(self, args, range):
@@ -205,7 +202,10 @@ class Plugin(SplitMixin):
         if not self.test_session or not self.test_session.stdout:
             self.error('No test results to show.')
             return
-        self.split_toggle()
+        if self.split_buffer_id() > -1:
+            self.split_delete()
+        else:
+            self.test_session.show_results(force=True)
 
     def cmd_stop(self):
         try:
@@ -227,23 +227,11 @@ class Plugin(SplitMixin):
 
     def run_tests(self, lineno=None):
         if self.test_session and self.test_session.proc:
-            self.error('Pytest is currently running. (Use "stop" to cancel.)')
+            self.vim.async_call(
+                self.error, 'Pytest is currently running. (Use "stop" to cancel.)'
+            )
             return
         self.signs.remove_all()
         self.test_session = TestSession(self, self.vim.current.buffer, lineno)
         self.test_session()
 
-    def show_summary(self):
-        total = self.test_session.num_started
-        outcomes = self.test_session.outcomes
-        if total:
-            if all(o == 'passed' for o in outcomes):
-                func = self.echo_good
-            elif not self.test_session.bad_outcomes:
-                func = self.echo_okay
-            else:
-                func = self.echo_bad
-            text = ', '.join(('%d %s' % (v, k)) for k, v in outcomes.items())
-            func('%d tests done: %s' % (total, text))
-        else:
-            self.echo_okay('No tests found.')
