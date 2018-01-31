@@ -162,7 +162,12 @@ class Plugin(SplitMixin):
         self.vim = vim
         self.signs = Signs(vim)
         self.test_session = None
+        self.vim.command('let g:vp_commands = %s' % self.commands())
         super().__init__()
+
+    @classmethod
+    def commands(cls):
+        return [c[4:] for c in vars(cls).keys() if c.startswith('cmd_')]
 
     def echo(self, msg):
         escaped = str(msg).replace('"', '\\"')
@@ -183,7 +188,7 @@ class Plugin(SplitMixin):
     def error(self, obj):
         self.vim.err_write('[VP] %s\n' % obj)
 
-    @neovim.command('VP', range='', nargs='*', sync=False)
+    @neovim.command('VP', range='', nargs='+', complete='customlist,VPComplete', sync=False)
     def run(self, args, range):
         try:
             func = getattr(self, 'cmd_%s' % args[0])
@@ -222,7 +227,7 @@ class Plugin(SplitMixin):
         self.test_session.proc.join()
         self.echo('Stopped pytest.')
 
-    def cmd_nosigns(self):
+    def cmd_hidesigns(self):
         self.signs.remove_all()
 
     def run_tests(self, lineno=None):

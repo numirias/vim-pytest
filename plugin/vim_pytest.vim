@@ -63,6 +63,10 @@ function! VPDeleteSplit()
     endif
 endfunction
 
+function! VPComplete(lead, line, pos)
+    return filter(g:vp_commands, 'v:val =~ "^'. a:lead .'"')
+endfunction
+
 function! s:VPSetupWindow()
     if winnr("$") == 1
         q
