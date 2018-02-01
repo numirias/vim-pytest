@@ -188,6 +188,12 @@ class Plugin(SplitMixin):
     def error(self, obj):
         self.vim.err_write('[VP] %s\n' % obj)
 
+    @neovim.autocmd('VimLeave')
+    def on_exit(self):
+        if not self.test_session or not self.test_session.proc: # TODO
+            return
+        os.kill(self.test_session.proc.pid, signal.SIGINT)
+
     @neovim.command('VP', range='', nargs='+', complete='customlist,VPComplete', sync=False)
     def run(self, args, range):
         try:
