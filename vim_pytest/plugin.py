@@ -21,7 +21,7 @@ WIN_NAME = 'Results.pytest'
 
 class TestSession:
 
-    def __init__(self, vim_plugin, buffer, lineno):
+    def __init__(self, vim_plugin, buffer, lineno, args):
         self.vp = vim_plugin
         self.buffer = buffer
         self.lineno = lineno
@@ -30,6 +30,7 @@ class TestSession:
         self.stdout = None
         self.exitcode = None
         self.outcomes = None
+        self.args = args
 
     def __call__(self):
         path = self.buffer.name
@@ -39,7 +40,8 @@ class TestSession:
 
     def loop(self, path, lineno):
         conn, other = Pipe()
-        proc = Process(target=pytest_process, args=(other, lineno, [path]))
+        pytest_args = list(self.args) + [path]
+        proc = Process(target=pytest_process, args=(other, lineno, pytest_args))
         self.proc = proc
         proc.start()
         while True:
@@ -201,10 +203,10 @@ class Plugin(SplitMixin):
         except AttributeError:
             self.error('Subcommand not found: %s' % args[0])
         else:
-            func()
+            func(*args[1:])
 
-    def cmd_file(self):
-        self.run_tests()
+    def cmd_file(self, *args):
+        self.run_tests(args=args)
 
     def cmd_function(self):
         self.run_tests(self.vim.current.window.cursor[0])
@@ -236,13 +238,13 @@ class Plugin(SplitMixin):
     def cmd_hidesigns(self):
         self.signs.remove_all()
 
-    def run_tests(self, lineno=None):
+    def run_tests(self, lineno=None, args=()):
         if self.test_session and self.test_session.proc:
             self.vim.async_call(
                 self.error, 'Pytest is currently running. (Use "stop" to cancel.)'
             )
             return
         self.signs.remove_all()
-        self.test_session = TestSession(self, self.vim.current.buffer, lineno)
+        self.test_session = TestSession(self, self.vim.current.buffer, lineno, args)
         self.test_session()
 
