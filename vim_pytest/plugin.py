@@ -113,27 +113,38 @@ class TestSession:
     def show_summary(self):
         total = self.num_started
         outcomes = self.outcomes
-        outcomes_text = ', '.join(('%d %s' % (v, k)) for k, v in outcomes.items())
+        hl_map = {
+            'passed': 'pytestSuccess',
+            'skipped': 'pytestWarning',
+            'xfailed': 'pytestWarning',
+            'xpassed': 'pytestSuccess',
+            'failed': 'pytestError',
+            'error': 'pytestError',
+        }
+        outcomes_text = ', '.join(
+            ('{%s}%d %s' % (hl_map.get(k, 'Normal'), v, k))
+            for k, v in outcomes.items()
+        )
         if len(outcomes) == 1:
-            summary = 'All %d tests %s.' % (total, list(outcomes)[0])
+            outcome = list(outcomes)[0]
+            summary = '{%s}All %d tests %s.' % (hl_map[outcome], total, outcome)
         else:
             summary = '%d tests done: %s' % (total, outcomes_text)
         if self.exitcode == EXIT_OK:
-            self.vp.echo_good(summary)
-        elif self.exitcode in [EXIT_TESTSFAILED, EXIT_INTERRUPTED]:
-            if self.exitcode == EXIT_INTERRUPTED:
-                if not outcomes:
-                    self.vp.echo_bad('Interrupted!')
-                else:
-                    self.vp.echo_bad('Interrupted! %s' % summary)
-            else:
-                self.vp.echo_bad(summary)
+            res = summary
+        elif self.exitcode == EXIT_INTERRUPTED:
+            res = '{ErrorMsg}Interrupted!'
+            if outcomes:
+                res += '{Normal} %s' % summary
+        elif self.exitcode == EXIT_TESTSFAILED:
+            res = summary
         elif self.exitcode == EXIT_INTERNALERROR:
-            self.vp.echo_okay('Internal error!')
+            res = '{ErrorMsg}Internal error!'
         elif self.exitcode == EXIT_USAGEERROR:
-            self.vp.echo_okay('Usage error!')
+            res = '{ErrorMsg}Usage error!'
         elif self.exitcode == EXIT_NOTESTSCOLLECTED:
-            self.vp.echo_okay('No tests collected.')
+            res = '{pytestWarning}No tests collected.'
+        self.vp.echo_color(res)
 
 
 class SplitMixin:
@@ -175,17 +186,8 @@ class Plugin(SplitMixin):
         escaped = str(msg).replace('"', '\\"')
         self.vim.command('echo "%s"' % escaped)
 
-    def echo_okay(self, msg, *args, **kwargs):
-        self.echo_color(msg, hl='pytestWarning', *args, **kwargs)
-
-    def echo_bad(self, msg, *args, **kwargs):
-        self.echo_color(msg, hl='pytestError', *args, **kwargs)
-
-    def echo_good(self, msg, *args, **kwargs):
-        self.echo_color(msg, hl='pytestSuccess', *args, **kwargs)
-
-    def echo_color(self, msg, hl='Normal', *args, **kwargs):
-        self.vim.call('VPEcho', msg, hl, *args, **kwargs)
+    def echo_color(self, msg):
+        self.vim.call('VPEchoColor', msg)
 
     def error(self, obj):
         self.vim.err_write('[VP] %s\n' % obj)

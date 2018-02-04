@@ -28,22 +28,6 @@ nmap <silent><leader>C :VP stop<CR>
 nmap <silent><F10> :VP toggle<CR>
 
 
-function! VPEcho(msg, hl)
-    let l:msg = []
-    if type(a:msg) != type([])
-        let l:msg = split(a:msg, "\n")
-    else
-        let l:msg = a:msg
-    endif
-    let l:msg = map(l:msg, 'substitute(v:val, "\t", "        ", "")')
-
-    exe 'echohl ' . a:hl
-    for line in l:msg
-        echom '[VP] ' . line
-    endfor
-    echohl None
-endfunction
-
 function! VPCreateSplit(num_lines)
     let l:split_id = bufnr('Results.pytest')
     if l:split_id == -1
@@ -79,6 +63,20 @@ function! s:VPSetupWindow()
     setlocal nowrap
     setlocal filetype=pytest
     setlocal winfixheight
+endfunction
+
+function! VPEchoColor(str)
+    echon '[VP] '
+    for item in split(a:str, '{')
+        let l:parts = split(item, '}')
+        if len(l:parts) == 1
+            echon l:parts[0]
+        else
+            exe 'echohl ' . l:parts[0]
+            echon l:parts[1]
+        endif
+    endfor
+    echohl None
 endfunction
 
 autocmd! BufEnter Results.pytest call s:VPSetupWindow()
